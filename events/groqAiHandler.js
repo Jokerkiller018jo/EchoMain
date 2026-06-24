@@ -1,8 +1,8 @@
-const { createErrorEmbed, createActionButtons } = require('../../utils/groqEmbedUtils');
-const { generateChatCompletion } = require('../../services/groqService');
-const GroqUser = require('../../models/groqai/GroqUser');
-const Channel = require('../../models/groqai/Channel');
-const Conversation = require('../../models/groqai/Conversation');
+const { createErrorEmbed, createActionButtons } = require('../utils/groqEmbedUtils');
+const { generateChatCompletion } = require('../services/groqService');
+const GroqUser = require('../models/groqai/GroqUser');
+const Channel = require('../models/groqai/Channel');
+const Conversation = require('../models/groqai/Conversation');
 
 async function handleGroqAI(message, client) {
     if (message.author.bot || !message.guild) return false;
