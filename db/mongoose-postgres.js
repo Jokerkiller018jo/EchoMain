@@ -17,7 +17,7 @@ try {
     // Suppress config read error
 }
 
-const connectionString = process.env.DATABASE_URL || config.postgresUri || config.mongodbUri || process.env.MONGODB_URI;
+const connectionString = process.env.DATABASE_URL || config.postgresUri || config.postsqlUri || process.env.PostgreSQL_URI;
 
 function getPgPool() {
     if (!pool) {
