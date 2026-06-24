@@ -2,6 +2,7 @@ const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const EventEmitter = require('events');
 
 let pool = null;
 let isInitialized = false;
@@ -17,7 +18,7 @@ try {
     // Suppress config read error
 }
 
-const connectionString = process.env.DATABASE_URL || config.postgresUri || config.postsqlUri || process.env.PostgreSQL_URI;
+const connectionString = process.env.DATABASE_URL || config.postgresUri || config.mongodbUri || process.env.MONGODB_URI;
 
 function getPgPool() {
     if (!pool) {
@@ -245,7 +246,6 @@ function buildQuerySql(modelName, queryObj, startParamIdx = 2) {
             const orClauses = [];
             for (const subQuery of queryObj[key]) {
                 const subResult = buildQuerySql(modelName, subQuery, paramIdx);
-                // Subquery first param is model_name, which is always $1. We extract only the filters.
                 const subFilters = subResult.whereClause.split(' AND ').slice(1);
                 if (subFilters.length > 0) {
                     orClauses.push(`(${subFilters.join(' AND ')})`);
@@ -278,6 +278,23 @@ function buildQuerySql(modelName, queryObj, startParamIdx = 2) {
     };
 }
 
+// Mongoose Mock: VirtualType helper
+class VirtualType {
+    constructor(name) {
+        this.name = name;
+        this.getter = null;
+        this.setter = null;
+    }
+    get(fn) {
+        this.getter = fn;
+        return this;
+    }
+    set(fn) {
+        this.setter = fn;
+        return this;
+    }
+}
+
 // Mongoose Mock: Schema Class
 class Schema {
     constructor(definition, options) {
@@ -286,6 +303,9 @@ class Schema {
         this.statics = {};
         this.methods = {};
         this.paths = {};
+        this.virtuals = {};
+        this._preHooks = {};
+        this._postHooks = {};
         this._parseDefinition(this.definition);
     }
     
@@ -303,6 +323,36 @@ class Schema {
                 this.paths[pathStr] = val;
             }
         }
+    }
+    
+    virtual(name) {
+        if (!this.virtuals[name]) {
+            this.virtuals[name] = new VirtualType(name);
+        }
+        return this.virtuals[name];
+    }
+
+    plugin(fn, options) {
+        if (typeof fn === 'function') {
+            fn(this, options);
+        }
+        return this;
+    }
+
+    pre(hookName, fn) {
+        if (!this._preHooks[hookName]) {
+            this._preHooks[hookName] = [];
+        }
+        this._preHooks[hookName].push(fn);
+        return this;
+    }
+
+    post(hookName, fn) {
+        if (!this._postHooks[hookName]) {
+            this._postHooks[hookName] = [];
+        }
+        this._postHooks[hookName].push(fn);
+        return this;
     }
     
     index(fields, options) {
@@ -488,7 +538,7 @@ class PostgresModel {
             }
         }
         
-        // Return a proxy that directs reads and writes to the inner _doc object
+        // Return a proxy that directs reads and writes to the inner _doc object, handling virtual getters/setters
         return new Proxy(this, {
             get: (target, prop) => {
                 if (prop in target) return target[prop];
@@ -496,9 +546,23 @@ class PostgresModel {
                 if (prop === 'toObject' || prop === 'toJSON') {
                     return () => JSON.parse(JSON.stringify(target._doc));
                 }
+                
+                // Virtual Getter logic
+                const virtual = schema && schema.virtuals[prop];
+                if (virtual && virtual.getter) {
+                    return virtual.getter.call(target);
+                }
+                
                 return getPath(target._doc, prop);
             },
             set: (target, prop, value) => {
+                // Virtual Setter logic
+                const virtual = schema && schema.virtuals[prop];
+                if (virtual && virtual.setter) {
+                    virtual.setter.call(target, value);
+                    return true;
+                }
+                
                 if (prop in target) {
                     target[prop] = value;
                 } else {
@@ -516,6 +580,22 @@ class PostgresModel {
     async save() {
         const modelName = this.constructor.modelName;
         const schema = this.constructor.schema;
+        
+        // Run Pre hooks (e.g. pre('save'))
+        if (schema && schema._preHooks && schema._preHooks['save']) {
+            for (const fn of schema._preHooks['save']) {
+                if (fn.length > 0) { // Takes next callback
+                    await new Promise((resolve, reject) => {
+                        fn.call(this, (err) => {
+                            if (err) reject(err);
+                            else resolve();
+                        });
+                    });
+                } else {
+                    await fn.call(this);
+                }
+            }
+        }
         
         if (schema && schema.options.timestamps) {
             const now = new Date();
@@ -535,6 +615,14 @@ class PostgresModel {
              DO UPDATE SET doc = EXCLUDED.doc, updated_at = NOW()`,
             [modelName, this._doc]
         );
+        
+        // Run Post hooks (e.g. post('save'))
+        if (schema && schema._postHooks && schema._postHooks['save']) {
+            for (const fn of schema._postHooks['save']) {
+                fn.call(this);
+            }
+        }
+        
         return this;
     }
 
@@ -573,6 +661,19 @@ class PostgresModel {
 // Registry for models
 const modelsRegistry = {};
 
+// Mongoose Connection Event Emitter
+class MongooseConnection extends EventEmitter {
+    constructor() {
+        super();
+        this.db = {
+            admin: () => ({
+                ping: async () => true
+            })
+        };
+    }
+}
+const connectionInstance = new MongooseConnection();
+
 const mongooseMock = {
     Schema,
     Types: {
@@ -608,15 +709,15 @@ const mongooseMock = {
     },
     connect: async function (uri) {
         await initializeDatabase();
+        connectionInstance.emit('connected');
+        connectionInstance.emit('open');
         return {
-            connection: {
-                db: {
-                    admin: () => ({
-                        ping: async () => true
-                    })
-                }
-            }
+            connection: connectionInstance
         };
+    },
+    connection: connectionInstance,
+    set: function(option, val) {
+        // No-op for Mongoose global configuration
     }
 };
 
@@ -625,7 +726,6 @@ class CollectionMock {
     constructor(name) {
         this.name = name;
         this.modelName = `collection_${name}`;
-        // Create an implicit mock model for validation/defaults
         this.model = mongooseMock.model(this.modelName, new Schema({}));
     }
     
@@ -687,6 +787,7 @@ module.exports = {
     model: mongooseMock.model,
     connect: mongooseMock.connect,
     connection: mongooseMock.connection,
+    set: mongooseMock.set,
     
     // MongoClient Exports
     MongoClient: MongoClientMock,
