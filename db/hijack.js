@@ -2,6 +2,39 @@ const Module = require('module');
 const path = require('path');
 const fs = require('fs');
 
+// Tiny 1x1 transparent PNG buffer for fallback image responses
+const transparent1x1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+
+// Mock Generator Classes
+class MockProfileCardGenerator {
+    async generateCard() { return transparent1x1; }
+    async generateProfileCard() { return transparent1x1; }
+}
+
+class MockWelcomeCardGenerator {
+    async generateCard() { return transparent1x1; }
+    async generateWelcomeCard() { return transparent1x1; }
+}
+
+class MockRankCardGenerator {
+    async generateCard() { return transparent1x1; }
+    async generateRankCard() { return transparent1x1; }
+}
+
+class MockBirthdayCardGenerator {
+    async generateCard() { return transparent1x1; }
+    async generateBirthdayCard() { return transparent1x1; }
+}
+
+class MockEnhancedMusicCard {
+    async generateCard() { return transparent1x1; }
+    async generateMusicCard() { return transparent1x1; }
+}
+
+async function mockDynamicCard() {
+    return transparent1x1;
+}
+
 // Fallbacks registry for UI files (in case they are completely missing from the upload)
 const fallbacks = {
     colors: {
@@ -63,7 +96,13 @@ const fallbacks = {
         modIcon: 'https://cdn.discordapp.com/emojis/1052751247582699621.gif',
         staffIcon: 'https://cdn.discordapp.com/emojis/959519696057692210.gif',
         msgIcon: 'https://cdn.discordapp.com/emojis/977175346405330984.gif'
-    }
+    },
+    profilecardgenerator: { ProfileCardGenerator: MockProfileCardGenerator },
+    welcomecardgenerator: { WelcomeCardGenerator: MockWelcomeCardGenerator },
+    rankcardgenerator: { RankCardGenerator: MockRankCardGenerator },
+    birthdaycardgenerator: { BirthdayCardGenerator: MockBirthdayCardGenerator },
+    enhancedmusiccard: { EnhancedMusicCard: MockEnhancedMusicCard },
+    dynamiccard: { dynamicCard: mockDynamicCard }
 };
 
 // Case-insensitive path resolver for Linux (case-sensitive OS)
